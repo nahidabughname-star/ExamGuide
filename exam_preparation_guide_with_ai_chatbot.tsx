@@ -1,0 +1,1313 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore';
+
+// --- مؤثرات صوتية تفاعلية باستخدام Web Audio API ---
+const playTone = (freq = 440, duration = 0.15, type = 'sine') => {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    oscillator.type = type;
+    oscillator.frequency.value = freq;
+    
+    gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + duration);
+  } catch (e) {
+    console.log("Audio feedback not supported or blocked by browser.");
+  }
+};
+
+// تهيئة مفتاح API فارغ للتشغيل التلقائي عبر البيئة البرمجية الذكية لـ Gemini
+const apiKey = "";
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('welcome');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [visitorCount, setVisitorCount] = useState(100); // رقم ترحيبي افتراضي يبدأ من 100
+  
+  // --- حالة التنبيهات المخصصة ---
+  const [toast, setToast] = useState({ show: false, text: '', type: 'success' });
+  const showToast = (text, type = 'success') => {
+    setToast({ show: true, text, type });
+    playTone(type === 'success' ? 523.25 : 349.23, 0.2);
+    setTimeout(() => {
+      setToast(prev => ({ ...prev, show: false }));
+    }, 4000);
+  };
+
+  // --- إعداد وإدارة عداد الزوار التفاعلي (Firebase Firestore) ---
+  useEffect(() => {
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'umm-al-mouminin-guide';
+
+    const handleLocalCounter = () => {
+      const savedCount = localStorage.getItem('umm_visitor_count');
+      if (savedCount) {
+        const nextCount = parseInt(savedCount) + 1;
+        localStorage.setItem('umm_visitor_count', nextCount.toString());
+        setVisitorCount(nextCount);
+      } else {
+        const startCount = 100;
+        localStorage.setItem('umm_visitor_count', startCount.toString());
+        setVisitorCount(startCount);
+      }
+    };
+
+    if (!firebaseConfig) {
+      handleLocalCounter();
+      return;
+    }
+
+    const initFirebaseCounter = async () => {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // تسجيل الدخول الآمن أولاً
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+
+        // مسار معتمد وحصري لقاعدة البيانات المدرسية
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'statistics', 'visitors');
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          await updateDoc(docRef, { count: increment(1) });
+          const updatedSnap = await getDoc(docRef);
+          setVisitorCount(updatedSnap.data().count);
+        } else {
+          await setDoc(docRef, { count: 100 });
+          setVisitorCount(100);
+        }
+      } catch (error) {
+        console.warn("Firebase config present but failed to connect. Falling back to local counter.", error);
+        handleLocalCounter();
+      }
+    };
+
+    initFirebaseCounter();
+  }, []);
+
+  // --- شات بوت الذكاء الاصطناعي (Gemini 2.5 API) ---
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'model', text: 'مرحباً بكِ يا زهرة مدرسة أم المؤمنين! أنا مستشاركِ الذكي للامتحانات وإدارة الضغوط. اسأليني عن أي موضوع يصعب عليكِ تنظيمه أو كيف تتغلبين على قلق ليلة الامتحان! 🌸' }
+  ]);
+  const [userQuery, setUserQuery] = useState('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, isAiLoading, isChatOpen]);
+
+  const queryGemini = async (studentMessage) => {
+    const systemPrompt = `أنت مرشد أكاديمي ومستشار نفسي ذكي متعاطف لطالبات مدرسة أم المؤمنين للتعليم الثانوي الحلقة الثالثة بنات في دولة الإمارات العربية المتحدة.
+الموقع من تصميم وتنفيذ المعلمة الفاضلة ناهد أبوغنيم وإشراف مديرة المدرسة مريم الحوسني.
+مهمتك الأساسية هي الإجابة بأسلوب دافئ ومبسط، داعم، ومحفز جدًا باللغة العربية.
+قدم نصائح عملية حول: الاستعداد للاختبارات، التغلب على التوتر والقلق، وضع خطط المذاكرة، استخدام أسلوب بومودورو وتمرين التنفس، وتغذية العقل السليم.
+تحدث دائمًا بنبرة تربوية أنثوية راقية تدعو للتفاؤل، واستخدم الإيموجي المناسب بشكل لطيف ومبهج 🌸🎓📚.`;
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+    const payload = {
+      contents: [{ parts: [{ text: studentMessage }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] }
+    };
+
+    const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error('Network response failure');
+        const data = await response.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply) return reply;
+        throw new Error('Invalid response data structure');
+      } catch (err) {
+        if (attempt === 5) {
+          throw new Error("عذرًا يا بنيتي، واجهت صعوبة في معالجة طلبك حاليًا. يرجى المحاولة مجددًا.");
+        }
+        await delay(Math.pow(2, attempt - 1) * 1000);
+      }
+    }
+  };
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!userQuery.trim() || isAiLoading) return;
+
+    const messageToSend = userQuery.trim();
+    setUserQuery('');
+    setChatMessages(prev => [...prev, { role: 'user', text: messageToSend }]);
+    setIsAiLoading(true);
+    playTone(440, 0.1);
+
+    try {
+      const aiReply = await queryGemini(messageToSend);
+      setChatMessages(prev => [...prev, { role: 'model', text: aiReply }]);
+      playTone(523.25, 0.15, 'triangle');
+    } catch (error) {
+      setChatMessages(prev => [...prev, { 
+        role: 'model', 
+        text: `بنيتي العزيزة، لم أستطع الاتصال بالخادم الذكي الآن. تفضلي بوضع مفتاح الـ API الخاص بك أو المحاولة مجدداً لاحقاً. تذكري دائماً أن التحديات تصنع العظماء! 💪🌸` 
+      }]);
+      showToast("تعذر الاتصال بالذكاء الاصطناعي حالياً", "error");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const handleQuickQuestion = (questionText) => {
+    setUserQuery(questionText);
+    playTone(392, 0.1);
+  };
+
+  // --- منظم الخطة الدراسية الأسبوعية ---
+  const [planner, setPlanner] = useState({
+    الأحد: ['مراجعة الوحدة الأولى رياضيات', 'قراءة ملخص التربية الإسلامية'],
+    الإثنين: ['مذاكرة كيمياء - الخواص الدورية', 'حل واجب اللغة العربية المدمج'],
+    الثلاثاء: ['تطبيق عملي لمفاهيم الفيزياء الكهرومغناطيسية'],
+    الأربعاء: ['حل نموذج اختبار اللغة الإنجليزية التجريبي'],
+    الخميس: ['مراجعة التلخيصات العامة لجميع مواد الأسبوع']
+  });
+  const [newTasks, setNewTasks] = useState({ الأحد: '', الإثنين: '', الثلاثاء: '', الأربعاء: '', الخميس: '' });
+
+  const handleAddTask = (day) => {
+    if (!newTasks[day].trim()) return;
+    setPlanner({
+      ...planner,
+      [day]: [...planner[day], newTasks[day].trim()]
+    });
+    setNewTasks({ ...newTasks, [day]: '' });
+    showToast(`تمت إضافة مهمة ليوم ${day}`);
+  };
+
+  const handleDeleteTask = (day, index) => {
+    const updated = [...planner[day]];
+    updated.splice(index, 1);
+    setPlanner({ ...planner, [day]: updated });
+    showToast("تم حذف المهمة بنجاح", "info");
+  };
+
+  // --- تمرين التنفس التفاعلي ---
+  const [breathState, setBreathState] = useState('جاهز للبدء'); 
+  const [breathColor, setBreathColor] = useState('from-indigo-500 to-purple-500');
+  const [breathTimer, setBreathTimer] = useState(4);
+  const [isBreathingActive, setIsBreathingActive] = useState(false);
+  const breathIntervalRef = useRef(null);
+
+  useEffect(() => {
+    if (isBreathingActive) {
+      let stage = 'inhale';
+      setBreathState('شهيق عميق.. استنشقي الأمل 🌸');
+      setBreathColor('from-emerald-400 to-teal-500 scale-110');
+      setBreathTimer(4);
+      playTone(523.25, 0.3, 'sine');
+
+      breathIntervalRef.current = setInterval(() => {
+        setBreathTimer((prev) => {
+          if (prev <= 1) {
+            if (stage === 'inhale') {
+              stage = 'hold';
+              setBreathState('احبسي النفس.. حافظي على هدوئك 🧘‍♀️');
+              setBreathColor('from-amber-400 to-orange-500 scale-115');
+              playTone(587.33, 0.3, 'sine');
+              return 4;
+            } else if (stage === 'hold') {
+              stage = 'exhale';
+              setBreathState('زفير بطيء.. تخلصي من الضغوط والتوتر 💨');
+              setBreathColor('from-rose-400 to-purple-600 scale-95');
+              playTone(659.25, 0.3, 'sine');
+              return 4;
+            } else {
+              stage = 'inhale';
+              setBreathState('شهيق عميق.. استنشقي الأمل 🌸');
+              setBreathColor('from-emerald-400 to-teal-500 scale-110');
+              playTone(523.25, 0.3, 'sine');
+              return 4;
+            }
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      clearInterval(breathIntervalRef.current);
+      setBreathState('جاهز للبدء');
+      setBreathColor('from-indigo-500 to-purple-500 scale-100');
+      setBreathTimer(4);
+    }
+    return () => clearInterval(breathIntervalRef.current);
+  }, [isBreathingActive]);
+
+  // --- مؤقت المذاكرة بومودورو ---
+  const [pomoMinutes, setPomoMinutes] = useState(25);
+  const [pomoSeconds, setPomoSeconds] = useState(0);
+  const [isPomoRunning, setIsPomoRunning] = useState(false);
+  const [pomoMode, setPomoMode] = useState('work');
+  const pomoIntervalRef = useRef(null);
+
+  useEffect(() => {
+    if (isPomoRunning) {
+      pomoIntervalRef.current = setInterval(() => {
+        if (pomoSeconds > 0) {
+          setPomoSeconds(pomoSeconds - 1);
+        } else {
+          if (pomoMinutes === 0) {
+            playTone(880, 0.8, 'sawtooth');
+            if (pomoMode === 'work') {
+              setPomoMode('break');
+              setPomoMinutes(5);
+              setPomoSeconds(0);
+              showToast("رائعة! انتهت جلسة التركيز. خذي استراحة 5 دقائق الآن 🧘‍♀️", "success");
+            } else {
+              setPomoMode('work');
+              setPomoMinutes(25);
+              setPomoSeconds(0);
+              showToast("انتهى وقت الراحة. هيا نعود لمذاكرة ممتعة بكل تركيز! 💪", "success");
+            }
+          } else {
+            setPomoMinutes(pomoMinutes - 1);
+            setPomoSeconds(59);
+          }
+        }
+      }, 1000);
+    } else {
+      clearInterval(pomoIntervalRef.current);
+    }
+    return () => clearInterval(pomoIntervalRef.current);
+  }, [isPomoRunning, pomoMinutes, pomoSeconds, pomoMode]);
+
+  // --- قائمة التحقق ليوم الامتحان ---
+  const [checklist, setChecklist] = useState([
+    { id: 1, text: 'أخذ قسط كافٍ من النوم ليلة الامتحان (لا يقل عن 7 ساعات)', checked: false },
+    { id: 2, text: 'تجهيز الزي المدرسي والبطاقة والقرطاسية والأقلام كاملة قبل النوم', checked: false },
+    { id: 3, text: 'تناول وجبة إفطار صحية متوازنة تمد الدماغ بالطاقة المستمرة', checked: false },
+    { id: 4, text: 'إحضار زجاجة مياه للشرب بانتظام داخل قاعة الامتحانات', checked: false },
+    { id: 5, text: 'الوصول المبكر إلى المدرسة وتجنب مراجعات التوتر اللحظية مع الصديقات', checked: false },
+    { id: 6, text: 'قراءة أذكار الصباح ودعاء تيسير الامتحان والتوكل التام على الله', checked: false }
+  ]);
+
+  const toggleChecklistItem = (id) => {
+    setChecklist(
+      checklist.map(item => item.id === id ? { ...item, checked: !item.checked } : item)
+    );
+    playTone(600, 0.05, 'sine');
+  };
+
+  const calculatedReadiness = Math.round((checklist.filter(i => i.checked).length / checklist.length) * 100);
+
+  // --- شعلة الأمل وبث الطاقة الإيجابية ---
+  const positiveQuotes = [
+    "طالبتنا المبدعة في مدرسة أم المؤمنين، تذكري دائماً أن التعب يزول، ولذة النجاح والتفوق تدوم وتصنع المستقبل الشامخ!",
+    "كل صفحة تقرئينها اليوم، وكل معادلة تفهمينها، هي خطوة واثقة نحو حلمكِ الذي ينتظركِ غداً بشوق. نحن نؤمن بكِ وبذكائكِ!",
+    "أنتِ لستِ مجرد طالبة في قاعة اختبار؛ أنتِ قائدة ملهمة، وطاقة إيجابية، ووجه مشرق لدولة الإمارات الغالية في المستقبل القريب.",
+    "تفاءلي بالخير تجديه! واجهي كتبكِ ودراستكِ بابتسامة، واعلمي أن كل ثانية تبذلينها في سبيل العلم هي عبادة ترفع قدركِ.",
+    "عندما تشعرين بالتعب، خذي نفساً عميقاً، وتخيلي فرحة والديكِ، ودموع السعادة في عيونهم يوم إعلان النتائج الباهرة. يستحق الأمر المحاولة مجدداً!"
+  ];
+  const [currentQuote, setCurrentQuote] = useState(positiveQuotes[0]);
+  const [quoteFade, setQuoteFade] = useState(false);
+  const [affirmations, setAffirmations] = useState([
+    { id: 1, text: "سأبذل قصارى جهدي لأصنع فخراً مدهشاً لعائلتي ومعلماتي الغاليات.", color: "bg-pink-100 text-pink-800" },
+    { id: 2, text: "أنا واثقة، ذكية، وقادرة على اجتياز مادة الفيزياء والرياضيات بامتياز!", color: "bg-indigo-100 text-indigo-800" }
+  ]);
+  const [newAffirmation, setNewAffirmation] = useState('');
+
+  const rotateQuote = () => {
+    setQuoteFade(true);
+    playTone(659.25, 0.1);
+    setTimeout(() => {
+      let nextIndex;
+      do {
+        nextIndex = Math.floor(Math.random() * positiveQuotes.length);
+      } while (positiveQuotes[nextIndex] === currentQuote);
+      setCurrentQuote(positiveQuotes[nextIndex]);
+      setQuoteFade(false);
+    }, 300);
+  };
+
+  const handleAddAffirmation = (e) => {
+    e.preventDefault();
+    if (!newAffirmation.trim()) return;
+    const colors = [
+      "bg-pink-100 text-pink-800",
+      "bg-indigo-100 text-indigo-800",
+      "bg-emerald-100 text-emerald-800",
+      "bg-amber-100 text-amber-800",
+      "bg-sky-100 text-sky-800"
+    ];
+    const chosenColor = colors[Math.floor(Math.random() * colors.length)];
+    setAffirmations([{ id: Date.now(), text: newAffirmation.trim(), color: chosenColor }, ...affirmations]);
+    setNewAffirmation('');
+    showToast("تم تثبيت بطاقة الأمل الخاصة بكِ على الجدار 📌");
+  };
+
+  // --- استبانة التقييم والشهادة التفاعلية القابلة للطباعة ---
+  const [studentName, setStudentName] = useState('');
+  const [evaluation, setEvaluation] = useState({ q1: '', q2: '', q3: '', q4: '', q5: '' });
+  const [isSurveySubmitted, setIsSurveySubmitted] = useState(false);
+
+  const handleSurveySubmit = (e) => {
+    e.preventDefault();
+    if (!studentName.trim()) {
+      showToast("يرجى إدخال اسمكِ الثلاثي لإصدار الشهادة الرسمية.", "error");
+      return;
+    }
+    setIsSurveySubmitted(true);
+    showToast("تهانينا! تم تسجيل تقييمكِ وإصدار شهادة الجهوزية والتميز 🎓");
+  };
+
+  const triggerCertificatePrint = () => {
+    const printContent = document.getElementById("certificate-frame").innerHTML;
+    const originalContent = document.body.innerHTML;
+    document.body.innerHTML = printContent;
+    window.print();
+    document.body.innerHTML = originalContent;
+    window.location.reload();
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col justify-between font-sans text-slate-800 relative select-none antialiased" dir="rtl">
+      
+      {/* --- تذكير / توست مخصص --- */}
+      {toast.show && (
+        <div className={`fixed top-4 left-4 z-50 p-4 rounded-xl shadow-2xl transition-all duration-300 transform translate-y-0 border flex items-center gap-3 animate-bounce ${
+          toast.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
+          toast.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-blue-50 border-blue-200 text-blue-800'
+        }`}>
+          <span className="text-xl">
+            {toast.type === 'success' ? '✨' : toast.type === 'error' ? '⚠️' : 'ℹ️'}
+          </span>
+          <span className="text-sm font-bold">{toast.text}</span>
+        </div>
+      )}
+
+      {/* --- الهيدر الرئيسي المعتمد للمدرسة --- */}
+      <header className="bg-gradient-to-r from-violet-800 via-purple-700 to-indigo-900 text-white shadow-xl sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-white/10 p-2.5 rounded-2xl backdrop-blur-md border border-white/10 hidden sm:block">
+              <svg className="w-9 h-9 text-rose-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <div className="text-center md:text-right">
+              <h1 className="text-xl md:text-2xl font-black tracking-tight drop-shadow-md">مدرسة أم المؤمنين للتعليم الثانوي</h1>
+              <div className="flex flex-wrap justify-center md:justify-start items-center gap-2 mt-0.5">
+                <p className="text-xs text-purple-200 font-bold tracking-wide">الحلقة الثالثة - بنات | منصة التميز والاستعداد التفاعلي للاختبارات</p>
+                {/* عداد زوار علوي تفاعلي ونابض */}
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-black">
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span>
+                  👁️ زوار المنصة: {visitorCount.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* أزرار التصفح للأجهزة المكتبية واللوحية الكبيرة */}
+          <nav className="hidden xl:flex flex-wrap items-center gap-1.5 bg-white/5 p-1 rounded-xl border border-white/10">
+            {[
+              { id: 'welcome', label: 'الرئيسية' },
+              { id: 'health', label: 'الغذاء والجسد' },
+              { id: 'mental', label: 'الراحة النفسية' },
+              { id: 'motivation', label: '✨ شعلة الأمل' },
+              { id: 'planner', label: 'الخطة الدراسية' },
+              { id: 'strategies', label: 'الاستراتيجيات' },
+              { id: 'exam-day', label: 'يوم الامتحان' },
+              { id: 'revision', label: 'التلخيص والمراجعة' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => { setActiveTab(tab.id); playTone(300, 0.08); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition duration-200 ${
+                  activeTab === tab.id ? 'bg-white text-violet-900 shadow-md scale-105' : 'text-purple-100 hover:bg-white/10'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <button 
+              onClick={() => { setActiveTab('survey'); playTone(300, 0.08); }}
+              className={`px-4 py-1.5 rounded-lg text-xs font-black transition duration-200 bg-rose-500 hover:bg-rose-600 text-white shadow-lg ${
+                activeTab === 'survey' ? 'ring-2 ring-white scale-105' : ''
+              }`}
+            >
+              التقييم والشهادة 🎓
+            </button>
+          </nav>
+
+          {/* زر القائمة للشاشات الصغيرة والمتوسطة */}
+          <div className="xl:hidden flex items-center">
+            <button
+              onClick={() => { setMobileMenuOpen(!mobileMenuOpen); playTone(250, 0.05); }}
+              className="p-2 rounded-xl bg-white/10 text-white focus:outline-none border border-white/15"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {mobileMenuOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* منسدلة التصفح للأجهزة الذكية واللوحية الصغيرة */}
+        {mobileMenuOpen && (
+          <div className="xl:hidden bg-purple-900 border-t border-purple-800/80 animate-fadeIn">
+            <div className="px-3 pt-2 pb-5 space-y-1.5">
+              {[
+                { id: 'welcome', label: 'الرئيسية' },
+                { id: 'health', label: 'الصحة البدنية والغذاء' },
+                { id: 'mental', label: 'الصحة النفسية وتقليل التوتر' },
+                { id: 'motivation', label: '✨ شعلة الأمل والطاقة الإيجابية' },
+                { id: 'planner', label: 'المنظم والخطة الأسبوعية' },
+                { id: 'strategies', label: 'استراتيجيات الحفظ والمذاكرة' },
+                { id: 'exam-day', label: 'توجيهات ليلة ويوم الامتحان' },
+                { id: 'revision', label: 'التلخيص والمراجعة السريعة' },
+                { id: 'survey', label: 'تقييم المنصة وإصدار الشهادة' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setMobileMenuOpen(false);
+                    playTone(300, 0.08);
+                  }}
+                  className={`block w-full text-right px-4 py-3 rounded-xl text-sm font-black transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-rose-500 text-white font-black'
+                      : 'text-purple-100 hover:bg-purple-800'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* --- بطل المنصة الترحيبي (يظهر في الرئيسية فقط) --- */}
+      {activeTab === 'welcome' && (
+        <section className="relative overflow-hidden bg-gradient-to-b from-indigo-50 to-white py-14 border-b border-indigo-100 text-center">
+          <div className="max-w-7xl mx-auto px-4 relative z-10">
+            <span className="inline-flex items-center px-4 py-1.5 rounded-full text-xs font-black bg-rose-50 text-rose-600 border border-rose-100 mb-5 animate-pulse">
+              ✨ المعلمة ناهد أبوغنيم ترحب بكنّ في رحاب التفوق الدراسي لعام 2026 ✨
+            </span>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-slate-800 leading-tight mb-4">
+              منصة الاستعداد الذكي والتميز الدراسي
+            </h2>
+            <p className="max-w-2xl mx-auto text-sm sm:text-base text-slate-600 leading-relaxed mb-8">
+              طالبتنا المتميزة في مدرسة أم المؤمنين، نقدّم لكِ دليلاً تفاعلياً متكاملاً مصمماً خصيصاً لمساعدتكِ على تنظيم وقتكِ، وتحقيق أقصى درجات التركيز والصحة البدنية والنفسية لتجاوز الامتحانات بكل ثقة ونجاح.
+            </p>
+            <div className="flex flex-wrap justify-center gap-4">
+              <button
+                onClick={() => { setActiveTab('motivation'); playTone(400, 0.1); }}
+                className="px-6 py-3.5 bg-gradient-to-r from-amber-500 to-rose-500 text-white rounded-2xl font-black text-sm shadow-xl shadow-orange-100 hover:scale-105 active:scale-95 transition-all"
+              >
+                شعلة الأمل والطاقة الإيجابية ✨
+              </button>
+              <button
+                onClick={() => { setIsChatOpen(true); playTone(500, 0.1); }}
+                className="px-6 py-3.5 bg-slate-800 text-white rounded-2xl font-black text-sm shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+              >
+                💬 اسألي المستشار الذكي (AI)
+              </button>
+            </div>
+          </div>
+          {/* خلفيات جمالية ضبابية */}
+          <div className="absolute top-0 right-0 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-3xl opacity-15 -mr-20 -mt-20"></div>
+          <div className="absolute bottom-0 left-0 w-72 h-72 bg-pink-300 rounded-full mix-blend-multiply filter blur-3xl opacity-15 -ml-20 -mb-20"></div>
+        </section>
+      )}
+
+      {/* --- الشات بوت العائم الذكي (Gemini 2.5 AI Powered) --- */}
+      <div className="fixed bottom-6 left-6 z-50 font-sans" dir="rtl">
+        {!isChatOpen && (
+          <button
+            onClick={() => { setIsChatOpen(true); playTone(523.25, 0.1, 'sine'); }}
+            className="bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-700 hover:from-violet-700 hover:to-indigo-800 text-white p-4 sm:p-5 rounded-full shadow-2xl transition transform hover:scale-110 active:scale-95 flex items-center gap-3 border border-white/20 group"
+          >
+            <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-500 text-xs font-black tracking-wide whitespace-nowrap">
+              اسألي مستشاركِ الذكي (AI)
+            </span>
+            <svg className="w-6 h-6 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+          </button>
+        )}
+
+        {/* نافذة المحادثة الذكية */}
+        {isChatOpen && (
+          <div className="bg-white w-[340px] sm:w-[390px] h-[520px] rounded-2xl shadow-2xl border border-slate-200/80 flex flex-col justify-between overflow-hidden animate-fadeIn">
+            <div className="bg-gradient-to-r from-violet-800 to-purple-800 text-white p-4 flex items-center justify-between shadow-md">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping"></div>
+                <div>
+                  <h4 className="text-xs font-black">مستشاركِ الأكاديمي والنفسي الذكي</h4>
+                  <p className="text-[10px] text-purple-200">مدرسة أم المؤمنين - إعداد أ. ناهد أبوغنيم</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => { setIsChatOpen(false); playTone(349.23, 0.1); }} 
+                className="text-white/80 hover:text-white text-xs font-bold bg-white/10 px-2.5 py-1 rounded-lg transition"
+              >
+                إغلاق ✕
+              </button>
+            </div>
+
+            {/* صندوق الرسائل */}
+            <div className="flex-grow p-4 overflow-y-auto space-y-4 bg-slate-50 text-xs leading-relaxed">
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] p-3 rounded-2xl shadow-sm ${
+                    msg.role === 'user' ? 'bg-violet-700 text-white rounded-tl-none' : 'bg-white text-slate-800 border border-slate-200 rounded-tr-none'
+                  }`}>
+                    <p className="whitespace-pre-line">{msg.text}</p>
+                  </div>
+                </div>
+              ))}
+              {isAiLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-white border border-slate-200 p-3 rounded-2xl rounded-tr-none text-slate-400 flex items-center gap-2">
+                    <span className="animate-bounce font-black text-violet-600">●</span>
+                    <span className="animate-bounce delay-75 font-black text-violet-600">●</span>
+                    <span className="animate-bounce delay-150 font-black text-violet-600">●</span>
+                    <span>مستشارك الذكي يخط الرد...</span>
+                  </div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* اقتراحات الأسئلة السريعة */}
+            <div className="p-2 bg-slate-100/50 border-t border-slate-150 flex gap-1.5 overflow-x-auto whitespace-nowrap scrollbar-none">
+              {[
+                "كيف أنظم وقتي ليلة الامتحان؟",
+                "أطعمة تساعد على التركيز",
+                "أعاني من توتر شديد، كيف أهدأ؟"
+              ].map((qText, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleQuickQuestion(qText)}
+                  className="bg-white hover:bg-violet-50 text-violet-800 border border-slate-200 px-2.5 py-1 rounded-full text-[10px] font-bold transition"
+                >
+                  {qText}
+                </button>
+              ))}
+            </div>
+
+            {/* نموذج إرسال الأسئلة */}
+            <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-slate-200 flex gap-2">
+              <input
+                type="text"
+                required
+                placeholder="اكتب استفسارك التربوي أو النفسي هنا..."
+                value={userQuery}
+                onChange={(e) => setUserQuery(e.target.value)}
+                className="flex-grow px-3.5 py-2.5 text-xs border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 text-slate-800"
+              />
+              <button
+                type="submit"
+                disabled={isAiLoading || !userQuery.trim()}
+                className="bg-violet-700 hover:bg-violet-800 disabled:bg-slate-300 text-white font-black px-4 py-2.5 rounded-xl text-xs transition shrink-0"
+              >
+                إرسال
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+
+      {/* --- محتوى المنصة الرئيسي وفقاً لخيارات التصفح --- */}
+      <main className="flex-grow max-w-7xl mx-auto px-4 py-8 w-full">
+        
+        {/* --- 1. الرئيسية والبطاقات التفاعلية السريعة --- */}
+        {activeTab === 'welcome' && (
+          <div className="space-y-8 animate-fadeIn">
+            {/* لوحة إحصائيات المنصة الجديدة والزوار */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-violet-500 to-indigo-600 text-white p-5 rounded-3xl shadow-lg border border-white/10 flex flex-col justify-between">
+                <div>
+                  <span className="text-2xl">👁️</span>
+                  <h4 className="text-xs font-bold opacity-80 mt-2">إجمالي زيارات الطالبات</h4>
+                  <p className="text-2xl font-black mt-1">{visitorCount.toLocaleString()}</p>
+                </div>
+                <span className="text-[10px] bg-white/25 px-2 py-0.5 rounded-full inline-block self-start mt-3">تحديث حي ومباشر 🟢</span>
+              </div>
+
+              <div className="bg-gradient-to-br from-rose-500 to-pink-600 text-white p-5 rounded-3xl shadow-lg border border-white/10 flex flex-col justify-between">
+                <div>
+                  <span className="text-2xl">🎓</span>
+                  <h4 className="text-xs font-bold opacity-80 mt-2">شهادات التفوق الصادرة</h4>
+                  <p className="text-2xl font-black mt-1">412 +</p>
+                </div>
+                <span className="text-[10px] bg-white/25 px-2 py-0.5 rounded-full inline-block self-start mt-3">طالبات أم المؤمنين 🌸</span>
+              </div>
+
+              <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-5 rounded-3xl shadow-lg border border-white/10 flex flex-col justify-between">
+                <div>
+                  <span className="text-2xl">📌</span>
+                  <h4 className="text-xs font-bold opacity-80 mt-2">رسائل التفاؤل المعلقة</h4>
+                  <p className="text-2xl font-black mt-1">{18 + affirmations.length}</p>
+                </div>
+                <span className="text-[10px] bg-white/25 px-2 py-0.5 rounded-full inline-block self-start mt-3">لوحة عهد الأمل ✨</span>
+              </div>
+
+              <div className="bg-gradient-to-br from-amber-500 to-orange-600 text-white p-5 rounded-3xl shadow-lg border border-white/10 flex flex-col justify-between">
+                <div>
+                  <span className="text-2xl">⏱️</span>
+                  <h4 className="text-xs font-bold opacity-80 mt-2">جلسات التركيز المكتملة</h4>
+                  <p className="text-2xl font-black mt-1">824</p>
+                </div>
+                <span className="text-[10px] bg-white/25 px-2 py-0.5 rounded-full inline-block self-start mt-3">تقنية بومودورو ⏱️</span>
+              </div>
+            </div>
+
+            {/* لوحة تعريف الذكاء الاصطناعي */}
+            <div className="bg-gradient-to-r from-violet-700 via-purple-700 to-indigo-800 text-white rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="space-y-2">
+                <span className="bg-white/20 text-white text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest">
+                  تقنيات المستقبل في خدمتكنّ
+                </span>
+                <h3 className="text-xl sm:text-2xl font-black">🤖 مستشاركِ الافتراضي التفاعلي جاهز دائمًا!</h3>
+                <p className="text-xs text-purple-100 leading-relaxed max-w-3xl">
+                  تضم منصتنا شات بوت تعليمي متقدم يجيبكِ بذكاء كامل، نابع من التوجيه التربوي لمدرسة أم المؤمنين. تمكنكِ المحاورة من الاستفسار عن تنظيم جدولكِ، ونصائح المراجعة، والتخفيف من رهبة الاختبارات.
+                </p>
+              </div>
+              <button
+                onClick={() => { setIsChatOpen(true); playTone(500, 0.1); }}
+                className="px-6 py-3 bg-amber-400 hover:bg-amber-500 text-slate-950 font-black rounded-2xl text-xs shadow-lg transition shrink-0 transform hover:scale-105"
+              >
+                ابدئي المحاورة الآن 💬
+              </button>
+            </div>
+
+            {/* أقسام الدليل السريعة */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+              {[
+                { id: 'health', title: '1. نصائح الصحة البدنية والغذاء', text: 'العقل السليم في الجسم السليم! تعرّفي على أفضل الأغذية لتقوية خلايا الذاكرة ووضعيات الجلوس السليمة.', icon: '🥦' },
+                { id: 'mental', title: '2. الصحة النفسية والتنفس', text: 'سيطري على توتر ما قبل الامتحان وجرّبي أداة التنفس التفاعلية الرائعة لتنظيم معدل نبضات قلبكِ.', icon: '🧘‍♀️' },
+                { id: 'motivation', title: '3. شعلة الأمل وجدار التفاؤل', text: 'بثي في قلبكِ التفاؤل والبهجة وتلقي كبسولات الأمل والعبارات التحفيزية الملهمة المخصصة لطالباتنا.', icon: '✨' },
+                { id: 'planner', title: '4. الخطة الأسبوعية التفاعلية', text: 'اصنعي جدولاً دراسياً مرناً وتابعي تقدمكِ اليومي من الأحد للخميس لتلافي تراكم المناهج الطويلة.', icon: '🗓️' },
+                { id: 'strategies', title: '5. استراتيجيات الحفظ والمذاكرة', text: 'تعلمي بذكاء لا بجهد! استكشفي تقنيات بومودورو وفاينمان العلمية المساعدة لترسيخ المفاهيم المدرسية.', icon: '💡' },
+                { id: 'exam-day', title: '6. نصائح وتوجيهات يوم الامتحان', text: 'كيف تستعدين صباح الامتحان؟ وما الذي يجب فعله وتجنبه داخل وخارج لجنة الاختبار بدقة تامة؟', icon: '✍️' },
+                { id: 'revision', title: '7. التلخيص والمراجعة الفعالة', text: 'اختصري المئات من صفحات المنهج عبر خرائط ذهنية ملونة ملهمة للذاكرة وطريقة كورنيل الشهيرة.', icon: '📝' }
+              ].map((section) => (
+                <div key={section.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-slate-200 hover:shadow-md transition p-6 flex flex-col justify-between">
+                  <div>
+                    <div className="w-12 h-12 rounded-xl bg-violet-50 text-violet-700 flex items-center justify-center mb-4 text-2xl">
+                      {section.icon}
+                    </div>
+                    <h4 className="text-base font-black text-slate-800 mb-2">{section.title}</h4>
+                    <p className="text-xs text-slate-500 leading-relaxed mb-4">{section.text}</p>
+                  </div>
+                  <button
+                    onClick={() => { setActiveTab(section.id); playTone(300, 0.08); }}
+                    className="text-xs font-black text-indigo-600 hover:text-indigo-800 text-right inline-flex items-center gap-1 group"
+                  >
+                    عرض التفاصيل تفاعلياً <span className="group-hover:translate-x-[-4px] transition-transform">←</span>
+                  </button>
+                </div>
+              ))}
+
+              {/* بطاقة التقييم للحصول على الشهادة */}
+              <div className="bg-gradient-to-br from-rose-50 to-pink-50 rounded-2xl shadow-sm border border-rose-100 hover:border-rose-200 p-6 flex flex-col justify-between">
+                <div>
+                  <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center mb-4 text-2xl animate-pulse">
+                    🎓
+                  </div>
+                  <h4 className="text-base font-black text-rose-900 mb-2">استبانة التقييم والشهادة الرسمية</h4>
+                  <p className="text-xs text-rose-700 leading-relaxed mb-4">
+                    شاركينا تقييمكِ الرائد لدليل الاستعداد للاختبارات للحصول على شهادة تميز مخصصة وموقعة من إدارة مدرسة أم المؤمنين.
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setActiveTab('survey'); playTone(300, 0.08); }}
+                  className="px-4 py-2.5 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-black shadow text-center"
+                >
+                  تعبئة الاستبيان وإصدار الشهادة 🎓
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 2. صفحة الصحة والجسد --- */}
+        {activeTab === 'health' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-violet-800 flex items-center gap-3">
+              <span className="p-2.5 bg-violet-50 text-violet-600 rounded-xl">🥦</span>
+              الصحة العامة والغذاء المنشط للذاكرة
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              الغذاء الصحي المتوازن ومراعاة الوضعيات الجسدية المريحة هما أساس التميز والتحصيل العلمي الواعي. طالبتنا المتميزة، احرصي على تزويد جسدكِ بأفضل سبل الراحة والنماء.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl">
+                <h3 className="font-black text-slate-800 text-sm mb-3 flex items-center gap-2">
+                  <span className="text-emerald-500">🍎</span> أطعمة تعشقها الذاكرة
+                </h3>
+                <ul className="space-y-3 text-xs text-slate-600 leading-relaxed">
+                  <li><strong>المكسرات (كاللوز والجوز):</strong> غنية بالأوميغا 3 والزنك لتعزيز القدرات العقلية والتركيز.</li>
+                  <li><strong>الأسماك الدهنية:</strong> مثل التونة والسلمون ترفع من كفاءة ونشاط خلايا الدماغ بشكل ممتاز.</li>
+                  <li><strong>الخضروات الورقية الداكنة:</strong> السبانخ والجرجير يحميان الذاكرة من التشتت والنسيان.</li>
+                  <li><strong>الماء:</strong> احرصي على شرب كوب ماء بانتظام كل ساعة لتفادي الجفاف والصداع.</li>
+                </ul>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl">
+                <h3 className="font-black text-slate-800 text-sm mb-3 flex items-center gap-2">
+                  <span className="text-blue-500">🪑</span> الجلسة الصحيّة والآمنة
+                </h3>
+                <ul className="space-y-3 text-xs text-slate-600 leading-relaxed">
+                  <li><strong>استقامة الظهر:</strong> اختاري كرسي مريح ذو مسند داعم للعمود الفقري لحمايتكِ من التشنجات العضلية.</li>
+                  <li><strong>مستوى الشاشة والكتاب:</strong> ضعي كتابكِ بمستوى عينيكِ لتفادي ثني الرقبة المستمر والإرهاق العضلي.</li>
+                  <li><strong>إضاءة الغرفة الكافية:</strong> تجنبي المذاكرة في زوايا معتمة لحماية خلايا شبكية العين من الإرهاق.</li>
+                </ul>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl flex flex-col justify-between">
+                <div>
+                  <h3 className="font-black text-slate-800 text-sm mb-3 flex items-center gap-2">
+                    <span className="text-purple-500">🏃‍♀️</span> الرياضة والاستطالة
+                  </h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    الجلوس الطويل يحرم عقلكِ من كميات الأكسجين الكافية. ننصحكِ باتباع قاعدة المذاكرة لـ 50 دقيقة ثم الوقوف والمشي لمدة 10 دقائق لتنشيط الدورة الدموية وتمديد العضلات.
+                  </p>
+                </div>
+                <div className="bg-white p-3 rounded-xl border text-[10px] text-slate-500 mt-4">
+                  💡 تمرين تمدد الرقبة والكتفين 5 مرات يعيد تدفق الأكسجين بشكل فوري لعقلكِ النشط.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 3. صفحة الصحة النفسية --- */}
+        {activeTab === 'mental' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-pink-800 flex items-center gap-3">
+              <span className="p-2.5 bg-pink-50 text-pink-600 rounded-xl">🧘‍♀️</span>
+              الصحة النفسية وإدارة القلق والتوتر
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              القلق طبيعي، وهو دلالة على رغبتكِ بالنجاح! لكن تعلم إدارته يحول التوتر إلى وقود دافع للتميز. اتبعي التمارين والحلول الذكية التالية لتنعمي بالهدوء والسلام النفسي.
+            </p>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+              <div className="space-y-4 flex flex-col justify-between">
+                <div className="bg-pink-50/50 border border-pink-100 p-5 rounded-2xl space-y-2">
+                  <h3 className="font-black text-pink-950 text-sm">💡 استراتيجيات التخلص من رهبة الاختبار:</h3>
+                  <ul className="list-disc list-inside text-xs text-slate-700 space-y-2 leading-relaxed">
+                    <li><strong>التفاؤل والحديث الذاتي الإيجابي:</strong> رددي دائمًا "أنا أستطيع، عقلي قوي، وسأبذل كل عطائي بتميز".</li>
+                    <li><strong>الابتعاد عن الشائعات المتوترة:</strong> تجنبي نقاشات الصديقات القلقات ليلة الامتحان لتفادي العدوى النفسية للقلق.</li>
+                    <li><strong>ممارسة تمارين التنفس بانتظام:</strong> خذي فترات راحة قصيرة واسترخي تماماً.</li>
+                  </ul>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl">
+                  <h4 className="font-black text-slate-800 text-xs mb-1">ماذا تفعلين في حال حدوث توتر مفاجئ داخل قاعة الامتحانات؟</h4>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    ضعي القلم جانباً بهدوء تام، أغلقي عينيكِ لدقيقة واحدة، خذي ثلاثة أنفاس عميقة ومريحة، واقرئي سؤالاً سهلاً تحبينه لتعيدي برمجة ثقتكِ بنفسكِ تدريجياً.
+                  </p>
+                </div>
+              </div>
+
+              {/* أداة التنفس التفاعلية 4-4-4 */}
+              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-3xl p-6 shadow-xl flex flex-col items-center justify-center text-center relative overflow-hidden">
+                <div className="absolute top-0 right-0 left-0 py-2.5 bg-white/5 border-b border-white/5 text-[10px] font-black tracking-wider uppercase">
+                  🧘‍♀️ أداة التنفس التفاعلية ضد التوتر
+                </div>
+
+                <div className="my-8 space-y-4">
+                  <div className={`w-32 h-32 rounded-full bg-gradient-to-r ${breathColor} shadow-2xl flex items-center justify-center transition-all duration-1000 transform`}>
+                    <div className="text-center">
+                      <span className="text-[10px] text-white/70 block">المتبقي</span>
+                      <span className="text-3xl font-black">{breathTimer}</span>
+                      <span className="text-[10px] text-white/70 block">ثوانٍ</span>
+                    </div>
+                  </div>
+                  <p className="text-sm font-black text-purple-200 min-h-[2rem] px-4 leading-relaxed">
+                    {breathState}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => { setIsBreathingActive(!isBreathingActive); playTone(440, 0.1); }}
+                  className={`w-full max-w-xs py-3 rounded-2xl font-black text-xs shadow-md transition-all ${
+                    isBreathingActive ? 'bg-rose-500 hover:bg-rose-600 text-white' : 'bg-emerald-400 hover:bg-emerald-500 text-slate-950'
+                  }`}
+                >
+                  {isBreathingActive ? 'إيقاف التمرين' : 'البدء بتنفس هادئ وعميق 🌸'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 4. صفحة شعلة الأمل --- */}
+        {activeTab === 'motivation' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-8 animate-fadeIn">
+            <div className="text-center max-w-2xl mx-auto space-y-2">
+              <span className="px-3 py-1 bg-amber-50 text-amber-600 border border-amber-100 text-[10px] font-black rounded-full uppercase tracking-wider">
+                مساحة مخصصة لبث التفاؤل والبهجة
+              </span>
+              <h2 className="text-2xl font-black text-amber-800">✨ شعلة الأمل وجدار التفاؤل اليومي</h2>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                هذا الركن مصمم لرفع الروح المعنوية، وبعث التفاؤل والطمأنينة في قلوب طالباتنا العزيزات في مدرسة أم المؤمنين.
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 rounded-3xl p-6 sm:p-10 text-white text-center relative overflow-hidden shadow-xl max-w-2xl mx-auto border border-orange-400/20">
+              <div className="absolute top-4 right-4 text-xl opacity-30 animate-pulse">⭐</div>
+              <div className="absolute bottom-4 left-6 text-2xl opacity-20 animate-bounce">✨</div>
+              
+              <div className="relative z-10 space-y-5">
+                <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center mx-auto text-2xl">
+                  ✉️
+                </div>
+                <h4 className="text-xs font-black text-amber-100 uppercase tracking-widest">رسالتكِ الملهمة اللحظية:</h4>
+                <div className="min-h-[100px] flex items-center justify-center">
+                  <p className={`text-base sm:text-lg font-black leading-relaxed px-4 transition-all duration-300 ${quoteFade ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}>
+                    "{currentQuote}"
+                  </p>
+                </div>
+                <button
+                  onClick={rotateQuote}
+                  className="px-5 py-2.5 bg-white text-orange-600 hover:bg-slate-50 font-black text-xs rounded-xl shadow-lg transition-all transform hover:scale-105 active:scale-95"
+                >
+                  افتحي كبسولة أمل جديدة 🌸
+                </button>
+              </div>
+            </div>
+
+            {/* جدار العهد والإيجابية التفاعلي */}
+            <div className="space-y-4">
+              <div className="text-center">
+                <h3 className="font-black text-slate-800 text-sm">📌 جدار الأمل والعهد الإيجابي للطالبات</h3>
+                <p className="text-[10px] text-slate-500 mt-1">اكتبي عهد تفوقكِ أو دعاء تحبينه، وعلقي بطاقتكِ المميزة على لوحة الأمل الافتراضية!</p>
+              </div>
+
+              <form onSubmit={handleAddAffirmation} className="max-w-md mx-auto flex gap-2">
+                <input
+                  type="text"
+                  maxLength={90}
+                  required
+                  placeholder="سأبذل كل عطائي لأصنع فخراً مدهشاً لوالديّ ومعلماتي..."
+                  value={newAffirmation}
+                  onChange={(e) => setNewAffirmation(e.target.value)}
+                  className="flex-grow px-3.5 py-2.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-black rounded-xl shadow transition"
+                >
+                  تثبيت 📌
+                </button>
+              </form>
+
+              <div className="bg-slate-100 p-6 rounded-3xl border-2 border-slate-200/50 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 min-h-[160px] relative">
+                {affirmations.map((note) => (
+                  <div
+                    key={note.id}
+                    className={`${note.color} p-5 rounded-2xl shadow-sm border border-black/5 relative transform hover:rotate-0 hover:scale-105 transition duration-300 flex flex-col justify-between min-h-[110px]`}
+                    style={{ transform: `rotate(${(note.id % 5) - 2}deg)` }}
+                  >
+                    <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-red-500 rounded-full shadow-md"></div>
+                    <p className="text-xs font-black leading-relaxed text-slate-800">
+                      "{note.text}"
+                    </p>
+                    <div className="flex justify-between items-center text-[9px] text-slate-500 mt-3 pt-2 border-t border-black/5">
+                      <span>طالبة متميزة ✨</span>
+                      <button 
+                        onClick={() => {
+                          setAffirmations(affirmations.filter(n => n.id !== note.id));
+                          showToast("تمت إزالة البطاقة", "info");
+                        }} 
+                        className="text-slate-400 hover:text-rose-600 font-bold"
+                      >
+                        إزالة 🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 5. الخطة الأسبوعية التفاعلية --- */}
+        {activeTab === 'planner' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-emerald-800 flex items-center gap-3">
+              <span className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">🗓️</span>
+              مُنظّم خطة المذاكرة الأسبوعية
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              التنظيم يختصر المسافات الطويلة! قسّمي مذاكرة فصول المنهج اليومية على أيام الأسبوع الدراسي (من الأحد إلى الخميس) لتفادي التراكم والإجهاد الذهني ليلة الامتحان.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {Object.keys(planner).map((day) => (
+                <div key={day} className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex flex-col justify-between min-h-[220px]">
+                  <div>
+                    <div className="border-b pb-2 mb-3 font-black text-sm text-emerald-900 flex justify-between items-center">
+                      <span>{day}</span>
+                      <span className="text-[10px] bg-emerald-100 px-2 py-0.5 rounded-full font-bold">
+                        {planner[day].length} مهام
+                      </span>
+                    </div>
+
+                    <ul className="space-y-1.5 text-xs text-slate-600">
+                      {planner[day].map((task, idx) => (
+                        <li key={idx} className="bg-white p-2 rounded-xl border border-slate-200/80 flex justify-between items-start gap-1">
+                          <span className="break-all">{task}</span>
+                          <button
+                            onClick={() => handleDeleteTask(day, idx)}
+                            className="text-rose-500 hover:text-rose-700 text-[10px] font-bold shrink-0"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="mt-4 pt-2 border-t border-slate-200/80 space-y-1">
+                    <input
+                      type="text"
+                      placeholder="هدف جديد..."
+                      value={newTasks[day]}
+                      onChange={(e) => setNewTasks({ ...newTasks, [day]: e.target.value })}
+                      className="w-full p-2 text-[10px] border rounded-xl bg-white focus:outline-none"
+                    />
+                    <button
+                      onClick={() => handleAddTask(day)}
+                      className="w-full py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-black rounded-xl shadow"
+                    >
+                      إضافة هدف ➕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* --- 6. استراتيجيات المذاكرة الفعالة --- */}
+        {activeTab === 'strategies' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-amber-800 flex items-center gap-3">
+              <span className="p-2.5 bg-amber-50 text-amber-600 rounded-xl">💡</span>
+              استراتيجيات المذاكرة والحفظ العلمي السريع
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              المذاكرة الناجحة تعتمد على كفاءة الأداء لا كثرة الساعات العشوائية. تعرّفي على أهم الاستراتيجيات العلمية لترسيخ الروابط المعقدة في ذاكرتكِ:
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60 text-xs text-slate-650 leading-relaxed space-y-2">
+                <span className="text-2xl">⏱️</span>
+                <h3 className="font-black text-slate-800 text-sm">تقنية الطماطم (بومودورو)</h3>
+                <p>قمي بتحديد زمن الدراسة المركزة بـ 25 دقيقة (دون تشتت)، ثم خذي استراحة 5 دقائق. تساهم هذه الطريقة في تجديد طاقة الدماغ ومنع الإرهاق الفكري.</p>
+              </div>
+
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60 text-xs text-slate-650 leading-relaxed space-y-2">
+                <span className="text-2xl">🧬</span>
+                <h3 className="font-black text-slate-800 text-sm">الشرح وتبسيط المعلومات (فاينمان)</h3>
+                <p>أفضل وسيلة للفهم والرسوخ التام هي محاولة شرح المفهوم الصعب لشخص آخر أو لنفسكِ بأسلوب بسيط وخالٍ من التعقيدات اللغوية للمنهج.</p>
+              </div>
+
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60 text-xs text-slate-650 leading-relaxed space-y-2">
+                <span className="text-2xl">🎯</span>
+                <h3 className="font-black text-slate-800 text-sm">الاسترجاع النشط والتكرار</h3>
+                <p>تجنبي القراءة الصامتة والمكررة للكتاب؛ أغلقيه وحاولي كتابة ما تتذكرينه على ورقة بيضاء، أو قومي بحل أسئلة وتطبيقات ونماذج اختبارات سابقة.</p>
+              </div>
+            </div>
+
+            {/* أداة بومودورو مدمجة تفاعلية */}
+            <div className="bg-gradient-to-br from-amber-500/5 to-amber-500/10 border border-amber-200 rounded-3xl p-6 text-center max-w-sm mx-auto space-y-4 shadow-sm">
+              <span className="text-[10px] font-black uppercase text-amber-800 tracking-wider bg-amber-100 px-3 py-1 rounded-full">
+                ⏱️ مؤقت بومودورو التفاعلي للمذاكرة
+              </span>
+              <div className="text-4xl font-mono font-black text-slate-800">
+                {String(pomoMinutes).padStart(2, '0')}:{String(pomoSeconds).padStart(2, '0')}
+              </div>
+              <p className="text-xs font-bold text-slate-500">
+                {pomoMode === 'work' ? '⚙️ وضع التركيز والدراسة النشطة (25 دقيقة)' : '🧘‍♀️ وضع الاستراحة القصيرة المريحة (5 دقائق)'}
+              </p>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => { setIsPomoRunning(!isPomoRunning); playTone(500, 0.1); }}
+                  className="px-4 py-2 bg-slate-800 text-white text-xs font-black rounded-xl shadow hover:scale-105 transition"
+                >
+                  {isPomoRunning ? 'إيقاف مؤقت' : 'ابدئي الجلسة الآن'}
+                </button>
+                <button
+                  onClick={() => {
+                    setIsPomoRunning(false);
+                    setPomoMinutes(25);
+                    setPomoSeconds(0);
+                    setPomoMode('work');
+                    playTone(300, 0.1);
+                  }}
+                  className="px-3 py-2 bg-white border border-slate-300 text-slate-600 text-xs font-bold rounded-xl"
+                >
+                  إعادة ضبط
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 7. نصائح وتوجيهات يوم الامتحان --- */}
+        {activeTab === 'exam-day' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-rose-800 flex items-center gap-3">
+              <span className="p-2.5 bg-rose-50 text-rose-600 rounded-xl">✍️</span>
+              توجيهات ليلة الامتحان ويوم الاختبار الحاسم
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              الساعات القليلة السابقة للامتحان لها أثر كبير على كفاءة أدائكِ الدراسي. رتبي أولوياتكِ وكوني على أهبة الاستعداد والجاهزية النفسية واللوجستية.
+            </p>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+              <div className="bg-rose-50/20 border border-rose-100 p-5 rounded-2xl text-xs text-slate-700 leading-relaxed space-y-3">
+                <p>🌞 <strong>صباح يوم الامتحان:</strong> احرصي على التبكير وقراءة أذكاركِ المعينة، تناولي وجبة إفطار خفيفة غنية بالبروتينات والنشويات لضمان مستويات طاقة مستقرة، وتجنبي النقاشات المتوترة مع الصديقات قبل دخول القاعة.</p>
+                <p>📑 <strong>داخل قاعة الامتحان:</strong> اقرئي ورقة الأسئلة بتمهل وعناية مرتين، ابدئي بحل الأسئلة الواضحة والسهلة لبناء الثقة، وزعي لجنة الملاحظة بدقة على الأسئلة، ولا تغادري القاعة قبل المراجعة التامة لإجاباتكِ والتأكد من صياغة إجابة نموذجية وراقية تليق بكِ.</p>
+              </div>
+
+              {/* قائمة التحقق اليومية */}
+              <div className="bg-slate-50 border border-slate-200 p-5 rounded-3xl space-y-4">
+                <div>
+                  <h4 className="font-black text-slate-800 text-xs">✅ قائمة الجاهزية والتحقق الشخصية:</h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">اضغطي على المربع بعد إنجاز وتجهيز المهمة المحددة:</p>
+                </div>
+
+                <div className="space-y-2">
+                  {checklist.map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => toggleChecklistItem(item.id)}
+                      className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center gap-3 transition-all ${
+                        item.checked ? 'bg-emerald-50 border-emerald-200 text-emerald-800 line-through' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={item.checked} 
+                        readOnly 
+                        className="rounded text-violet-600 focus:ring-violet-500 pointer-events-none" 
+                      />
+                      <span>{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-4 border-t border-slate-200 flex justify-between items-center text-xs">
+                  <span className="font-bold text-slate-500">نسبة الجاهزية والاستعداد الإجمالية:</span>
+                  <span className="font-black text-rose-600 text-sm">{calculatedReadiness}%</span>
+                </div>
+                <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                  <div className="bg-gradient-to-r from-rose-500 to-emerald-500 h-full transition-all duration-500" style={{ width: `${calculatedReadiness}%` }}></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 8. التلخيص والمراجعة الفعالة --- */}
+        {activeTab === 'revision' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-indigo-800 flex items-center gap-3">
+              <span className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">📝</span>
+              التلخيص الذكي وأساليب المراجعات السريعة
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              تقليل المناهج الكثيفة عبر التلاخيص المفتاحية يساهم في تسهيل المراجعة السريعة وحفظ القوانين والصيغ بسهولة تامة ليلة الاختبار.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs text-slate-650 leading-relaxed">
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-2">
+                <h3 className="font-black text-slate-800 text-sm">📌 طريقة كورنيل لتنظيم وتدوين الملاحظات:</h3>
+                <p>قسمي ورقة التلخيص البيضاء إلى هامش أيمن لكتابة الكلمات المفتاحية والأسئلة الهامة، وقسم أيسر عريض لتدوين الشرح والتعريفات، مع ترك سطرين في الأسفل لخلاصة الفكرة الشاملة للدرس بكامل الهدوء.</p>
+              </div>
+
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-2">
+                <h3 className="font-black text-slate-800 text-sm">🗺️ الخرائط الذهنية الملونة والرسومية:</h3>
+                <p>ضعي المفهوم الأساسي في مركز الصفحة داخل شكل ملون بارز، ثم فرعي منه خطوطاً متفرعة تحمل التفاصيل والقوانين الهامة مع إدراج رموز ورسوم تعبيرية لتقوية ربط الذاكرة البصرية التراكمية.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- 9. صفحة التقييم والشهادة التفاعلية القابلة للطباعة --- */}
+        {activeTab === 'survey' && (
+          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-100 space-y-6 animate-fadeIn">
+            <h2 className="text-2xl font-black text-rose-800 flex items-center gap-3">
+              <span className="p-2.5 bg-rose-50 text-rose-600 rounded-xl">🎓</span>
+              استبانة التقييم وإصدار شهادة التفوق
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              رأيكِ القيّم يهمنا لتطوير خدمات المنصة ومساندة طالبات مدرسة أم المؤمنين. تفضلي بتعبئة التقييم السريع وأدخلي اسمكِ الثلاثي لتحصلي على شهادة التفوق والجاهزية للاختبارات.
+            </p>
+
+            {!isSurveySubmitted ? (
+              <form onSubmit={handleSurveySubmit} className="max-w-xl mx-auto bg-slate-50 border border-slate-200 p-5 sm:p-6 rounded-2xl space-y-5">
+                <div>
+                  <label className="block text-xs font-black text-slate-700 mb-1.5">اسم الطالبة الثلاثي (ليظهر على الشهادة المعتمدة):</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="اكتبي اسمكِ الثلاثي باللغة العربية بوضوح..."
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border rounded-xl text-xs bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  />
+                </div>
+
+                {[
+                  { key: 'q1', text: '1. كيف تقيمين فائدة النصائح الصحية والغذائية الواردة بالدليل؟' },
+                  { key: 'q2', text: '2. هل ساعدتكِ أداة التنفس التفاعلية على الاسترخاء وتقليل التوتر؟' },
+                  { key: 'q3', text: '3. ما مدى فائدة وسهولة استخدام المنظم الأسبوعي لمذاكرتكِ؟' },
+                  { key: 'q4', text: '4. هل استفدتِ من نصائح واستراتيجيات المذاكرة وتجربة مؤقت بومودورو؟' },
+                  { key: 'q5', text: '5. هل تشعرين بجاهزية نفسية وأكاديمية أفضل لخوض الامتحانات الآن؟' }
+                ].map((item, idx) => (
+                  <div key={item.key} className="space-y-1.5">
+                    <p className="text-xs font-black text-slate-700">{item.text}</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['ممتاز جداً', 'متوسط', 'تحتاج لتطوير'].map(option => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => { setEvaluation({ ...evaluation, [item.key]: option }); playTone(400, 0.05); }}
+                          className={`py-2 px-2 rounded-xl border text-[10px] font-black transition-all ${
+                            evaluation[item.key] === option ? 'bg-rose-500 text-white border-rose-500 shadow' : 'bg-white text-slate-600 border-slate-200 hover:bg-rose-50/50'
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white rounded-xl text-xs font-black shadow-md transition-all transform hover:scale-105"
+                >
+                  إرسال التقييم وإصدار شهادتي 🎓
+                </button>
+              </form>
+            ) : (
+              <div className="max-w-2xl mx-auto space-y-6 text-center">
+                <div id="certificate-frame" className="bg-white border-[14px] border-double border-amber-500 p-6 sm:p-10 rounded-2xl relative shadow-2xl text-center bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-50/20 via-white to-white select-text">
+                  <div className="border border-amber-300 p-4 rounded-xl flex flex-col justify-between">
+                    <div className="text-center border-b pb-3 mb-4">
+                      <h3 className="text-xs font-black text-amber-900 tracking-wider">دولة الإمارات العربية المتحدة</h3>
+                      <h4 className="text-[11px] font-bold text-slate-700">مدرسة أم المؤمنين للتعليم الثانوي (حلقة ثالثة - بنات)</h4>
+                      <p className="text-[9px] text-slate-400 italic">منصة الاستعداد والتفوق الدراسي</p>
+                    </div>
+
+                    <h2 className="text-xl sm:text-2xl font-black text-amber-800 tracking-wide">
+                      شهادة تميُّز وجاهزية للاختبارات
+                    </h2>
+                    <p className="text-[10px] text-slate-500 font-bold mt-2">تُمنح بكل فخر واعتزاز للطالبة المجتهدة والمبدعة</p>
+                    
+                    <div className="my-5">
+                      <span className="text-xl sm:text-2xl font-extrabold text-violet-950 border-b-2 border-dashed border-amber-400 pb-1 px-5 inline-block">
+                        {studentName}
+                      </span>
+                    </div>
+
+                    <p className="max-w-md mx-auto text-[11px] sm:text-xs text-slate-700 leading-relaxed mb-6">
+                      نظير استكمالها الاطلاع على محاور <strong>"دليل الاستعداد للاختبارات والتفوق"</strong> وتفاعلها الإيجابي المتميز مع المنظم الأسبوعي وتمارين الاسترخاء النفسي ومحاورتها المستشار الذكي الافتراضي لتجاوز التحديات بثقة واقتدار.
+                    </p>
+
+                    <p className="text-[10px] text-amber-800 font-black mb-6">
+                      "مع تمنياتنا الصادقة لها بدوام التميز الريادي لخدمة وطننا المعطاء"
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-4 text-center border-t border-amber-100 pt-4 mt-2 text-[10px] sm:text-[11px]">
+                      <div>
+                        <p className="text-slate-500 font-bold">مبادرة وإعداد المعلمة:</p>
+                        <p className="font-extrabold text-slate-800 mt-1">أ. ناهد أبوغنيم</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-bold">إشراف مديرة المدرسة:</p>
+                        <p className="font-extrabold text-slate-800 mt-1">أ. مريم الحوسني</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={triggerCertificatePrint}
+                    className="px-5 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black shadow-md transition"
+                  >
+                    حفظ الشهادة كملف PDF / طباعة 📄
+                  </button>
+                  <button
+                    onClick={() => { setIsSurveySubmitted(false); }}
+                    className="px-4 py-2.5 bg-white border text-xs text-slate-600 rounded-xl font-bold hover:bg-slate-50"
+                  >
+                    تعديل الاسم أو الإجابات
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+      </main>
+
+      {/* --- الفوتر الرسمي للمدرسة والجهات المنفذة والمشرفة --- */}
+      <footer className="bg-slate-900 text-slate-300 border-t border-slate-800 py-6 mt-12 transition-all text-xs text-center md:text-right">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <p className="font-bold text-white text-sm">مدرسة أم المؤمنين للتعليم الثانوي - الحلقة الثالثة بنات</p>
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-2 mt-1">
+              <p className="text-slate-500">جميع الحقوق محفوظة ومخصصة لطالبات المدرسة المتميزات © 2026</p>
+              {/* إحصائية العداد بالأسفل */}
+              <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
+                📊 عدد الزيارات الإجمالي: {visitorCount.toLocaleString()}
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 font-bold">
+            <div className="bg-slate-800 px-4 py-2 rounded-xl border border-slate-700 text-[11px]">
+              تنفيذ وإعداد المبادرة: <strong className="text-rose-400">المعلمة ناهد أبوغنيم</strong>
+            </div>
+            <div className="bg-slate-800 px-4 py-2 rounded-xl border border-slate-700 text-[11px]">
+              إشراف مديرة المدرسة الفاضلة: <strong className="text-yellow-400">مريم الحوسني</strong>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+    </div>
+  );
+}
